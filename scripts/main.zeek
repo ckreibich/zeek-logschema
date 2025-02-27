@@ -33,6 +33,11 @@ export {
 		logs: table[Log::ID] of Log &ordered;
 	};
 
+	## The log filter to use for determining modifications to logwrites
+	## (included/excluded fields, extensions, etc) as they happen. By
+	## default, this uses the "default" filter.
+	const logfilter = "default" &redef;
+
 	global field_hook: hook(id: Log::ID, field: Field);
 	global log_hook: hook(id: Log::ID, log: Log);
 	global schema_hook: hook(info: Info);
@@ -118,6 +123,91 @@ function unfold_field(rtype: string, fieldname: string, fieldinfo: record_field)
 	return fields;
 	}
 
+# Process a single log stream, returning a Log record with all field info.
+function analyze_stream(id: Log::ID): Log
+	{
+	local stream = Log::active_streams[id];
+	local typ = cat(stream$columns);
+	local fields: table[string] of Field = table() &ordered;
+	local name: string;
+	local filter: Log::Filter = Log::get_filter(id, logfilter);
+
+	if ( filter$name == Log::no_filter$name )
+		Reporter::warning(fmt("Log filter %s not found on log stream %s", logfilter, id));
+
+	if ( stream?$path )
+		name = stream$path;
+	else if ( filter$name != Log::no_filter$name && filter?$path )
+		name = filter$path;
+	else
+		{
+		# For the unusual/broken case where we have no path, we
+		# make one up from the record type's qualified name
+		# (without the last part, which is usually "Info") and
+		# hope it makes sense.
+		local parts = split_string(typ, /::/);
+		name = to_lower(join_string_vec(parts[0:-1], ""));
+		}
+
+	# Iterate over every field in the record type ...
+	for ( _, rfield in get_record_fields(typ) )
+		{
+		# ... and expand it into the field(s) it turns into in
+		# the log: this unfolds loggable record fields recursively.
+		for ( _, field in unfold_field(typ, rfield$name, rfield) )
+			{
+			# Honor exclude/include sets in the filter:
+			if ( filter$name != Log::no_filter$name )
+				{
+				if ( filter?$exclude && field$name in filter$exclude )
+					next;
+				if ( filter?$include && field$name !in filter$include )
+					next;
+				}
+
+			# Honor field renaming in the filter:
+			if ( field$name in filter$field_name_map )
+				field$name = filter$field_name_map[field$name];
+
+			if ( hook field_hook(id, field) )
+				fields[field$name] = field;
+			}
+		}
+
+	if ( filter$name == Log::no_filter$name )
+		return Log($name = name, $fields = fields);
+
+	# Honor log extension fields in the filter.
+	#
+	# Ugly: we need to discern the default Log::default_ext_func (which
+	# returns nothing) from a redef'd one (that should return a record). The
+	# type_name() output for the default is "function(path:string) : void".
+	#
+	# Using the returned value itself is prone to running into "value used
+	# but not set" interpreter errors.
+	if ( split_string(type_name(filter$ext_func), / *: */)[-1] == "void" )
+		return Log($name = name, $fields = fields);
+
+	local extrec_type = type_name(filter$ext_func(name));
+
+	for ( _, rfield in get_record_fields(extrec_type) )
+		{
+		for ( _, field in unfold_field(extrec_type, rfield$name, rfield) )
+			{
+			# Factor in the filter's extension prefix (often "_")
+			# for the field name. Do this after the above
+			# unfold_field(), since the latter does not know the
+			# field-naming prefix mechanism.
+			field$name = filter$ext_prefix + field$name;
+
+			if ( hook field_hook(id, field) )
+				fields[field$name] = field;
+			}
+		}
+
+	return Log($name = name, $fields = fields);
+	}
+
 event analyze()
 	{
 	local logs: table[Log::ID] of Log &ordered;
@@ -140,37 +230,7 @@ event analyze()
 	for ( _, idname in ids )
 		{
 		id = id_map[idname];
-
-		local stream = Log::active_streams[id];
-		local typ = cat(stream$columns);
-		local fields: table[string] of Field = table() &ordered;
-		local name: string;
-
-		if ( stream?$path )
-			name = stream$path;
-		else
-			{
-			# For the unusual/broken case where we have no path, we
-			# make one up from the record type's qualified name
-			# (without the last part, which is usually "Info") and
-			# hope it makes sense.
-			local parts = split_string(typ, /::/);
-			name = to_lower(join_string_vec(parts[0:-1], ""));
-			}
-
-		# Iterate over every field in the record type ...
-		for ( _, rfield in get_record_fields(typ) )
-			{
-			# ... and expand it into the field(s) it turns into in
-			# the log: this unfolds loggable record fields recursively.
-			for ( _, field in unfold_field(typ, rfield$name, rfield) )
-				{
-				if ( hook field_hook(id, field) )
-					fields[field$name] = field;
-				}
-			}
-
-		local log = Log($name = name, $fields = fields);
+		local log = analyze_stream(id);
 
 		if ( hook log_hook(id, log) )
 			logs[id] = log;
