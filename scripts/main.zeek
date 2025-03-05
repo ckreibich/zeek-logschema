@@ -18,6 +18,10 @@ export {
 	type Log: record {
 		name: string;  ##< Name of the log, in its short form (e.g. "conn").
 		fields: table[string] of Field &ordered;  ##< Fields of that log.
+
+		# XXX there's also a docstring for the log record type itself,
+		# though in practice it's not particularly useful. Could add if
+		# desired.
 	};
 
 	## Schema-wide metadata, including all of the logs.
@@ -32,9 +36,24 @@ export {
 
 	const logfilter = "default" &redef;
 
+	## Customization of a single log field. This hook runs just prior to
+	## addition of the field to the log. Breaking from the hook means the
+	## field will be omitted.
 	global field_hook: hook(id: Log::ID, field: Field);
+
+	## Custmization of a whole log. This hook runs just prior to the
+	## addition of the log to the schema. Breaking from the hook means the
+	## log will be skipped.
 	global log_hook: hook(id: Log::ID, log: Log);
+
+	## Customization of the schema. This hook runs just prior to export, so
+	## is a good place to establish export-specific state. Breaking from
+	## this hook has no effect.
 	global schema_hook: hook(info: Info);
+
+	## The output stage, running last. Each exporter can implement this as
+	## it sees fit. Breaking has no effect.
+	global write_hook: hook(info: Info);
 }
 
 # Add the name of the field a record_field instance describes to itself:
@@ -227,7 +246,10 @@ event analyze()
 			logs[id] = log;
 		}
 
-	hook schema_hook(Info($logs = logs));
+	local info = Info($logs = logs);
+
+	hook schema_hook(info);
+	hook write_hook(info);
 	}
 
 event zeek_init()
