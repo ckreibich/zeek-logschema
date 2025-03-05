@@ -7,8 +7,8 @@ export {
 	type Field: record {
 		name: string;  ##< Name of the field, as referred to in the log ("ts")
 		typ: string;  ##< Zeek type of the field (e.g. "string", "addr", "bool").
-		record_typ: string;  ##< Record type this field originated from (e.g. "conn_id").
-		script: string;  ##< Script in which the field gets defined, relative to the scripts folder (e.g. "base/init-bare.zeek").
+		record_typ: string;  ##< Record type containing this field (e.g. "conn_id").
+		script: string;  ##< Script that defines the field, relative to the scripts folder (e.g. "base/init-bare.zeek").
 		is_optional: bool;  ##< Whether the field is optional.
 		docstring: string &optional;  ##< If available, the docstring for the field.
 		package: string &optional;  ##< If part of a Zeek package, the package's name sans owner ("hello-world", not "zeek/hello-world").
@@ -18,6 +18,10 @@ export {
 	type Log: record {
 		name: string;  ##< Name of the log, in its short form (e.g. "conn").
 		fields: table[string] of Field &ordered;  ##< Fields of that log.
+
+		# XXX there's also a docstring for the log record type itself,
+		# though in practice it's not particularly useful. Could add if
+		# desired.
 	};
 
 	## Schema-wide metadata, including all of the logs.
@@ -32,9 +36,24 @@ export {
 
 	const logfilter = "default" &redef;
 
+	## Customization of a single log field. This hook runs just prior to
+	## addition of the field to the log. Breaking from the hook means the
+	## schema will omit the field.
 	global field_hook: hook(id: Log::ID, field: Field);
+
+	## Custmization of a whole log. This hook runs just prior to the
+	## addition of the log to the schema. Breaking from the hook means the
+	## schema will omit the log.
 	global log_hook: hook(id: Log::ID, log: Log);
+
+	## Customization of the schema. This hook runs just prior to export, so
+	## is a good place to establish export-specific state. Breaking from
+	## this hook has no effect.
 	global schema_hook: hook(info: Info);
+
+	## The output stage, running last. Each exporter can implement this as
+	## it sees fit to produce the schema data. Breaking has no effect.
+	global write_hook: hook(info: Info);
 }
 
 # Add the name of the field a record_field instance describes to itself:
@@ -227,7 +246,10 @@ event analyze()
 			logs[id] = log;
 		}
 
-	hook schema_hook(Info($logs = logs));
+	local info = Info($logs = logs);
+
+	hook schema_hook(info);
+	hook write_hook(info);
 	}
 
 event zeek_init()
