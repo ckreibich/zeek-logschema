@@ -50,6 +50,12 @@ export {
 	## - "%v": Zeek version
 	global create_schema_filename: function(template: string, info: Info, log: Log &default=Log($name="")): string;
 
+	## Given a record type name like "Conn::Info", returns a vector
+	## describing each of the fields. If log_only is true, only returns
+	## fields that have a &log attribute. (Zeek handles record-level &log
+	## transparently for us.)
+	global get_record_fields: function(type_name: string, log_only: bool &default=T): vector of record_field;
+
 	## Customization of a single log field. This hook runs just prior to
 	## addition of the field to the log. Breaking from the hook means the
 	## schema will omit the field.
@@ -75,10 +81,7 @@ redef record record_field += {
 	name: string &optional;
 };
 
-# Given a record type name like "Conn::Info", returns a vector describing each
-# of the fields that have a &log attribute. (Zeek handles record-level &log
-# transparently for us.)
-function get_record_fields(type_name: string): vector of record_field
+function get_record_fields(type_name: string, log_only: bool): vector of record_field
 	{
 	# record_fields() provides detailed field info, while
 	# record_type_to_vector() provides reliably ordered field names. Stitch
@@ -89,8 +92,7 @@ function get_record_fields(type_name: string): vector of record_field
 
 	for ( _, fieldname in rfields )
 		{
-		# We care only about fields that Zeek will log:
-		if ( ! rfields_table[fieldname]$log )
+		if ( log_only && ! rfields_table[fieldname]$log )
 			next;
 
 		rfields_table[fieldname]$name = fieldname;
