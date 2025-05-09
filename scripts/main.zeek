@@ -42,6 +42,14 @@ export {
 	## default, this uses the "default" filter.
 	const logfilter = "default" &redef;
 
+	## For exporters that support writing per-log schemas to individual
+	## files, this function produces a filename from the given input
+	## pattern and context. Supported substitutions in the filename:
+	##
+	## - "%l": log name, such as "conn" for conn.log
+	## - "%v": Zeek version
+	global create_schema_filename: function(template: string, info: Info, log: Log &default=Log($name="")): string;
+
 	## Customization of a single log field. This hook runs just prior to
 	## addition of the field to the log. Breaking from the hook means the
 	## schema will omit the field.
@@ -225,6 +233,14 @@ function analyze_stream(id: Log::ID): Log
 		}
 
 	return Log($name = name, $fields = fields);
+	}
+
+function create_schema_filename(template: string, info: Info, log: Log): string
+	{
+	local res = template;
+	res = gsub(res, /%l/, log$name);
+	res = gsub(res, /%v/, info$zeek_version);
+	return res;
 	}
 
 event analyze()
